@@ -6,10 +6,10 @@ trigger:
 variables:
   buildConfiguration: 'Release'
   dotNetVersion: '8.0.x'
-  # Update these paths to match your actual project structure
+  # Updated paths based on your actual structure
   solutionPath: '**/*.sln'
-  libraryProject: 'UpperCaseCheckLibrary/UpperCaseCheckLibrary.csproj' # Explicit relative path
-  testProject: 'UpperCaseCheckLibrary.Tests/UpperCaseCheckLibrary.Tests.csproj' # If exists
+  libraryProject: 'StringLibrary/StringLibrary.csproj' # Corrected path
+  consoleProject: 'ShowCase/ShowCase.csproj' # Your console app
 
 pool:
   name: MyCustomPool
@@ -22,12 +22,13 @@ steps:
     clean: true
     fetchDepth: 1
 
-  # 2. Debugging: Show exact file structure
+  # 2. Show exact file structure
   - powershell: |
-      Write-Host "##[section]Current directory:"
-      Get-Location
+      Write-Host "##[section]Current directory: $(Get-Location)"
+      Write-Host "##[section]All project files:"
+      Get-ChildItem -Recurse -Filter *.csproj | Select-Object FullName
       Write-Host "##[section]All files:"
-      Get-ChildItem -Recurse -File | Select-Object FullName
+      tree /F /A
     displayName: 'Debug: Show file structure'
 
   # 3. Install .NET 8 SDK
@@ -54,24 +55,23 @@ steps:
       projects: '$(solutionPath)'
       arguments: '--configuration $(buildConfiguration) --no-restore'
 
-  # 6. Pack NuGet package (with absolute verification)
+  # 6. Pack NuGet package
   - powershell: |
-      # Verify project file exists
-      if (-Not (Test-Path -Path '$(libraryProject)')) {
-        Write-Host "##vso[task.logissue type=error]Project file not found at $(libraryProject)"
-        Write-Host "##[section]Available project files:"
-        Get-ChildItem -Recurse -Filter *.csproj | Select-Object FullName
-        exit 1
-      }
-      
-      # Execute dotnet pack with explicit path
+      # Pack the library
       dotnet pack '$(libraryProject)' `
         --configuration $(buildConfiguration) `
         --output '$(Build.ArtifactStagingDirectory)' `
         --include-symbols `
         --include-source `
         -p:Version=1.0.0$(Rev:.r)
-    displayName: 'Pack NuGet package (verified)'
+      
+      # Verify package was created
+      if (-Not (Test-Path -Path '$(Build.ArtifactStagingDirectory)/*.nupkg')) {
+        Write-Host "##vso[task.logissue type=error]No packages were created"
+        Get-ChildItem '$(Build.ArtifactStagingDirectory)'
+        exit 1
+      }
+    displayName: 'Pack NuGet package'
 
   # 7. Push to Azure Artifacts
   - task: NuGetAuthenticate@1
@@ -84,3 +84,12 @@ steps:
       packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
       nuGetFeedType: 'internal'
       publishVstsFeed: 'UpperCaseFeed'
+
+  # 8. Build and publish console app (optional)
+  - task: DotNetCoreCLI@2
+    displayName: 'Publish console app'
+    inputs:
+      command: 'publish'
+      projects: '$(consoleProject)'
+      arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/app'
+      publishWebProjects: false
