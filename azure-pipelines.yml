@@ -1,4 +1,4 @@
-name: 1.0.0$(Rev:r)  # Sets version format at pipeline level
+name: 1.0.0$(Rev:r)
 
 trigger:
   - main
@@ -8,17 +8,16 @@ variables:
   dotNetVersion: '8.0.x'
   solutionPath: '**/*.sln'
   libraryProject: 'StringLibrary/StringLibrary.csproj'
-  consoleProject: 'ShowCase/ShowCase.csproj'
   
-  # Semantic version variables
+  # Versioning
   majorVersion: '1'
   minorVersion: '0'
   patchVersion: '0'
-
-pool:
-  name: MyCustomPool
-  demands:
-    - agent.name -equals MyNewAgent
+  
+  # Artifacts Feed Configuration
+  feedName: 'UpperCaseFeed'
+  organizationName: 'kpat1045' # Your organization name from the URL
+  projectName: 'StringLibrary' # The DevOps project containing the feed
 
 steps:
   # 1. Checkout code
@@ -31,6 +30,8 @@ steps:
       Write-Host "##[section]Working directory: $(Get-Location)"
       Write-Host "##[section]All project files:"
       Get-ChildItem -Recurse -Filter *.csproj | Select-Object FullName
+      Write-Host "##[section]Feed URL that will be used:"
+      Write-Host "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
     displayName: 'Debug: Show file structure'
 
   # 3. Install .NET 8 SDK
@@ -47,7 +48,7 @@ steps:
       command: 'restore'
       projects: '$(solutionPath)'
       feedsToUse: 'select'
-      vstsFeed: 'UpperCaseFeed'
+      vstsFeed: '$(feedName)'
 
   # 5. Build solution
   - task: DotNetCoreCLI@2
@@ -57,7 +58,7 @@ steps:
       projects: '$(solutionPath)'
       arguments: '--configuration $(buildConfiguration) --no-restore'
 
-  # 6. Pack NuGet package with explicit version
+  # 6. Pack NuGet package
   - task: DotNetCoreCLI@2
     displayName: 'Pack NuGet package'
     inputs:
@@ -67,16 +68,18 @@ steps:
       outputDir: '$(Build.ArtifactStagingDirectory)'
       nobuild: true
       includesymbols: true
-      arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion) -p:PackageVersion=$(majorVersion).$(minorVersion).$(patchVersion)'
+      arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion)'
 
-  # 7. Push to Azure Artifacts
+  # 7. Authenticate with Azure Artifacts
   - task: NuGetAuthenticate@1
     displayName: 'Authenticate with Azure Artifacts'
 
+  # 8. Push to Azure Artifacts (with full feed path)
   - task: NuGetCommand@2
-    displayName: 'Push to UpperCaseFeed'
+    displayName: 'Push to Azure Artifacts'
     inputs:
       command: 'push'
       packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
       nuGetFeedType: 'internal'
-      publishVstsFeed: 'UpperCaseFeed'
+      publishVstsFeed: '$(projectName)/$(feedName)' # Format: ProjectName/FeedName
+      allowPackageConflicts: false
