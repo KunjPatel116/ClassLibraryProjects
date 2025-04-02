@@ -11,10 +11,10 @@ variables:
   minorVersion: '0'
   patchVersion: '0'
   
-  # Artifacts Feed Configuration - MUST VERIFY THESE VALUES
-  organizationName: 'kpat1045'              # From your dev.azure.com URL
-  projectName: 'StringLibrary'        # The DevOps project containing the feed
-  feedName: 'UpperCaseFeed'                 # Your feed name (case-sensitive)
+  # Artifacts Feed Configuration
+  organizationName: 'kpat1045'
+  projectName: 'StringLibrary'  # Update with your exact project name
+  feedName: 'UpperCaseFeed'           # Case-sensitive feed name
 
 pool:
   name: MyCustomPool
@@ -26,33 +26,14 @@ steps:
   - checkout: self
     clean: true
 
-  # 2. Debug information - VERIFY OUTPUT MATCHES YOUR FEED
-  - powershell: |
-      Write-Host "##[section]Expected Feed URL:"
-      $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-      Write-Host $feedUrl
-      Write-Host "##[section]Attempting to access feed..."
-      try {
-        $response = Invoke-WebRequest -Uri $feedUrl -UseBasicParsing
-        Write-Host "##[section]Feed access successful!"
-        Write-Host $response.Content
-      }
-      catch {
-        Write-Host "##vso[task.logissue type=error]Feed access failed:"
-        Write-Host $_.Exception.Message
-      }
-    displayName: 'Verify Feed Access'
-    env:
-      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
-
-  # 3. Install .NET 8 SDK
+  # 2. Install .NET 8 SDK
   - task: UseDotNet@2
     displayName: 'Install .NET 8 SDK'
     inputs:
       version: $(dotNetVersion)
       performMultiLevelLookup: true
 
-  # 4. Restore packages
+  # 3. Restore packages
   - task: DotNetCoreCLI@2
     displayName: 'Restore Packages'
     inputs:
@@ -61,7 +42,7 @@ steps:
       feedsToUse: 'select'
       vstsFeed: '$(feedName)'
 
-  # 5. Build solution
+  # 4. Build solution
   - task: DotNetCoreCLI@2
     displayName: 'Build Solution'
     inputs:
@@ -69,17 +50,33 @@ steps:
       projects: '$(solutionPath)'
       arguments: '--configuration $(buildConfiguration) --no-restore'
 
-  # 6. Pack NuGet package
+  # 5. Pack NuGet package (with explicit output)
   - task: DotNetCoreCLI@2
     displayName: 'Create NuGet Package'
     inputs:
       command: 'pack'
       packagesToPack: '$(libraryProject)'
       configuration: $(buildConfiguration)
-      outputDir: '$(Build.ArtifactStagingDirectory)'
+      outputDir: '$(Build.ArtifactStagingDirectory)/packages'  # Specific subfolder
       nobuild: true
       includesymbols: true
       arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)'
+
+  # 6. Verify package was created
+  - powershell: |
+      $packageDir = "$(Build.ArtifactStagingDirectory)/packages"
+      Write-Host "##[section]Checking for packages in: $packageDir"
+      Get-ChildItem -Path $packageDir -Filter *.nupkg | ForEach-Object {
+        Write-Host "Found package: $($_.FullName)"
+        $packagePath = $_.FullName
+      }
+      
+      if (-not $packagePath) {
+        Write-Host "##vso[task.logissue type=error]No packages found in output directory"
+        Get-ChildItem -Path $(Build.ArtifactStagingDirectory) -Recurse | Format-Table FullName
+        exit 1
+      }
+    displayName: 'Verify Package Creation'
 
   # 7. Authenticate with Azure Artifacts
   - task: NuGetAuthenticate@1
@@ -87,28 +84,18 @@ steps:
     inputs:
       forceReinstallCredentialProvider: true
 
-  # 8. Push to Azure Artifacts (with feed verification)
+  # 8. Push to Azure Artifacts (with exact package path)
   - powershell: |
+      $packagePath = Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)/packages" -Filter *.nupkg | Select-Object -First 1 -ExpandProperty FullName
       $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-      $packagePath = "$(Build.ArtifactStagingDirectory)/*.nupkg"
       
-      # Verify feed exists
-      try {
-        $response = Invoke-WebRequest -Uri $feedUrl -UseBasicParsing
-        Write-Host "##[section]Feed verification successful, pushing package..."
-        
-        # Push package
-        dotnet nuget push $packagePath --source $feedUrl --api-key AzureArtifacts
-      }
-      catch {
-        Write-Host "##vso[task.logissue type=error]Feed verification failed:"
-        Write-Host $_.Exception.Message
-        Write-Host "##[section]Available feeds in project:"
-        $feedsUrl = "$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_apis/packaging/feeds?api-version=6.0-preview.1"
-        $feeds = Invoke-RestMethod -Uri $feedsUrl -Headers @{Authorization = "Bearer $(System.AccessToken)"}
-        $feeds.value | Format-Table name, id -AutoSize
-        exit 1
-      }
+      Write-Host "##[section]Pushing package: $packagePath"
+      Write-Host "##[section]To feed: $feedUrl"
+      
+      dotnet nuget push "$packagePath" `
+        --source "$feedUrl" `
+        --api-key AzureArtifacts `
+        --skip-duplicate
     displayName: 'Push to Azure Artifacts'
     env:
       VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials": [{"endpoint":"https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json", "username":"$(System.AccessToken)", "password":"$(System.AccessToken)"}]}'
