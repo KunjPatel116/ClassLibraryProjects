@@ -11,9 +11,9 @@ variables:
   patchVersion: '0'
 
 pool:
-  name: Default
+  name: MyCustomPool  # Your custom pool name
   demands:
-    - agent.name -equals MySelfHostedAgent  # Uses your self-hosted agent
+    - agent.name -equals MyNewAgent  # Your agent name (exact match)
 
 steps:
   # Install .NET 8 SDK
@@ -21,13 +21,16 @@ steps:
     displayName: 'Install .NET 8 SDK'
     inputs:
       version: $(dotNetVersion)
+      performMultiLevelLookup: true
 
   # Restore NuGet packages
   - task: DotNetCoreCLI@2
-    displayName: 'Restore NuGet packages'
+    displayName: 'Restore dependencies'
     inputs:
       command: 'restore'
       projects: '**/*.csproj'
+      feedsToUse: 'config'
+      nugetConfigPath: 'NuGet.config'  # Create this if using private feeds
 
   # Build the solution
   - task: DotNetCoreCLI@2
@@ -35,7 +38,7 @@ steps:
     inputs:
       command: 'build'
       projects: '**/*.csproj'
-      arguments: '--configuration $(buildConfiguration)'
+      arguments: '--configuration $(buildConfiguration) --no-restore'
 
   # Run tests (if any)
   - task: DotNetCoreCLI@2
@@ -43,11 +46,11 @@ steps:
     inputs:
       command: 'test'
       projects: '**/*Tests/*.csproj'
-      arguments: '--configuration $(buildConfiguration) --no-build'
+      arguments: '--configuration $(buildConfiguration) --no-build --collect:"Code coverage"'
 
-  # Pack the library into a NuGet package
+  # Create NuGet package
   - task: DotNetCoreCLI@2
-    displayName: 'Create NuGet package'
+    displayName: 'Pack NuGet package'
     inputs:
       command: 'pack'
       packagesToPack: '**/UpperCaseCheckLibrary.csproj'
@@ -57,12 +60,12 @@ steps:
       patchVersion: $(patchVersion)
       configuration: $(buildConfiguration)
       outputDir: '$(Build.ArtifactStagingDirectory)'
+      nobuild: true
 
-  # Authenticate with Azure Artifacts
+  # Push to Azure Artifacts
   - task: NuGetAuthenticate@1
     displayName: 'Authenticate with Azure Artifacts'
 
-  # Push the package to Azure Artifacts feed (UpperCaseFeed)
   - task: NuGetCommand@2
     displayName: 'Push to UpperCaseFeed'
     inputs:
@@ -70,4 +73,5 @@ steps:
       feedsToUse: 'select'
       packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
       nuGetFeedType: 'internal'
-      publishVstsFeed: 'UpperCaseFeed'  # Your Azure Artifacts feed name
+      publishVstsFeed: 'UpperCaseFeed'  # Your feed name
+      allowPackageConflicts: true
