@@ -11,7 +11,7 @@ variables:
   minorVersion: '0'
   patchVersion: '0'
   
-  # Artifacts Feed Configuration - CONFIRMED WORKING VALUES
+  # Artifacts Feed Configuration
   organizationName: 'kpat1045'
   projectName: 'StringLibrary'  # Your actual project name
   feedName: 'UpperCaseFeed'           # Your exact feed name
@@ -50,7 +50,7 @@ steps:
       projects: '$(solutionPath)'
       arguments: '--configuration $(buildConfiguration) --no-restore'
 
-  # 5. Pack NuGet package (with versioning)
+  # 5. Pack NuGet package
   - task: DotNetCoreCLI@2
     displayName: 'Create NuGet Package'
     inputs:
@@ -81,8 +81,9 @@ steps:
       $packagePath = Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)/packages" -Filter *.nupkg | Select-Object -First 1 -ExpandProperty FullName
       $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
       
-      Write-Host "##[section]Pushing package: $packagePath"
-      Write-Host "##[section]To feed: $feedUrl"
+      Write-Host "##[section]Pushing package: $($packagePath | Split-Path -Leaf)"
+      Write-Host "##[section]Package version: $(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)"
+      Write-Host "##[section]Target feed: $feedUrl"
       
       dotnet nuget push "$packagePath" `
         --source "$feedUrl" `
@@ -90,23 +91,4 @@ steps:
         --skip-duplicate
     displayName: 'Push to Azure Artifacts'
     env:
-      VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials": [{"endpoint":"$feedUrl", "username":"$(System.AccessToken)", "password":"$(System.AccessToken)"}]}'
-
-  # 9. Verify package in feed (optional)
-  - powershell: |
-      $packageName = "StringLibrary"
-      $versionPattern = "$(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)"
-      $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-      
-      Write-Host "##[section]Verifying package in feed..."
-      $packages = dotnet nuget list --source $feedUrl | Where-Object { $_ -match "$packageName\s+$versionPattern" }
-      
-      if ($packages) {
-        Write-Host "##[section]Package verification successful:"
-        Write-Host $packages
-      }
-      else {
-        Write-Host "##vso[task.logissue type=warning]Package not yet visible in feed (may take a few minutes)"
-      }
-    displayName: 'Verify Package in Feed'
-    condition: succeeded()
+      VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials": [{"endpoint":"https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json", "username":"$(System.AccessToken)", "password":"$(System.AccessToken)"}]}'
