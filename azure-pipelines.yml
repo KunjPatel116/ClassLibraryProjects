@@ -11,49 +11,36 @@ variables:
   minorVersion: '0'
   patchVersion: '0'
   
-  # Artifacts Feed Configuration - MUST UPDATE THESE!
+  # Artifacts Feed Configuration
   organizationName: 'kpat1045'
-  projectName: 'StringLibrary'
-  feedName: 'UpperCaseFeed'
+  projectName: 'StringLibrary'  # Update with your exact project name
+  feedName: 'UpperCaseFeed'           # Case-sensitive feed name
 
 jobs:
 - job: Build
-  strategy:
-    maxParallel: 1  # Ensures sequential execution
-  timeoutInMinutes: 30  # Prevents long-running jobs
+  timeoutInMinutes: 30
   pool:
     name: MyCustomPool
     demands:
-    - Agent.OS -equals Windows_NT
-    # Remove agent.name demand to allow any available agent
+    - Agent.OS -equals Windows_NT     # Requires Windows agent
 
   steps:
     # 1. Checkout code
     - checkout: self
       clean: true
-      fetchDepth: 1
 
-    # 2. Agent diagnostics
+    # 2. Environment verification
     - powershell: |
-        Write-Host "##[section]Available Agents in Pool:"
-        $apiUrl = "$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_apis/distributedtask/pools/$(Agent.PoolId)/agents?api-version=6.0"
-        $agents = Invoke-RestMethod -Uri $apiUrl -Headers @{
-          Authorization = "Bearer $(System.AccessToken)"
-        }
-        $agents.value | Where-Object { $_.status -eq 'online' } | Format-Table name, status, enabled -AutoSize
-        Write-Host "##[section]Current Job Position in Queue:"
-        $queueUrl = "$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_apis/distributedtask/queues/$(Agent.QueueId)/jobs?api-version=6.0"
-        $queue = Invoke-RestMethod -Uri $queueUrl -Headers @{
-          Authorization = "Bearer $(System.AccessToken)"
-        }
-        $queue.value | Sort-Object queueTime | Format-Table requestId, queueTime, status -AutoSize
-      displayName: 'Show Agent Pool Status'
-      env:
-        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+        Write-Host "##[section]Build Environment:"
+        Write-Host "Agent: $($env:AGENT_NAME)"
+        Write-Host "Directory: $(Get-Location)"
+        Write-Host "Project Files:"
+        Get-ChildItem -Recurse -Filter *.csproj | Select-Object FullName
+      displayName: 'Verify Environment'
 
     # 3. Install .NET 8 SDK
     - task: UseDotNet@2
-      displayName: 'Install .NET 8 SDK'
+      displayName: 'Install .NET 8'
       inputs:
         version: $(dotNetVersion)
         performMultiLevelLookup: true
@@ -75,30 +62,28 @@ jobs:
         projects: '$(solutionPath)'
         arguments: '--configuration $(buildConfiguration) --no-restore'
 
-    # 6. Pack NuGet package
+    # 6. Create NuGet package
     - task: DotNetCoreCLI@2
-      displayName: 'Create NuGet Package'
+      displayName: 'Pack NuGet'
       inputs:
         command: 'pack'
         packagesToPack: '$(libraryProject)'
         configuration: $(buildConfiguration)
         outputDir: '$(Build.ArtifactStagingDirectory)'
-        nobuild: true
-        includesymbols: true
         arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)'
 
     # 7. Authenticate with Azure Artifacts
     - task: NuGetAuthenticate@1
-      displayName: 'Authenticate with Azure Artifacts'
+      displayName: 'NuGet Authenticate'
       inputs:
         forceReinstallCredentialProvider: true
 
     # 8. Push to Azure Artifacts
     - task: NuGetCommand@2
-      displayName: 'Push to Azure Artifacts'
+      displayName: 'Push Package'
       inputs:
         command: 'push'
         packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
         nuGetFeedType: 'internal'
         publishVstsFeed: '$(feedName)'
-        allowPackageConflicts: true
+        allowPackageConflicts: false
