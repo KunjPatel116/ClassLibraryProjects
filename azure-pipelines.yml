@@ -14,10 +14,16 @@ variables:
   minorVersion: '0'
   patchVersion: '0'
   
-  # Artifacts Feed Configuration
-  feedName: 'UpperCaseFeed'
-  organizationName: 'kpat1045' # Your organization name from the URL
-  projectName: 'StringLibrary' # The DevOps project containing the feed
+  # Artifacts Feed Configuration - MUST UPDATE THESE!
+  organizationName: 'kpat1045'              # From your dev.azure.com URL
+  projectName: 'StringLibrary'        # The DevOps project containing the feed
+  feedName: 'UpperCaseFeed'                 # Your feed name (case-sensitive)
+
+pool:
+  name: MyCustomPool                        # Your self-hosted agent pool
+  demands:
+  - Agent.OS -equals Windows_NT             # Requires Windows agent
+  # - agent.name -equals YourAgentName      # Optional: Specific agent
 
 steps:
   # 1. Checkout code
@@ -25,14 +31,16 @@ steps:
     clean: true
     fetchDepth: 1
 
-  # 2. Show exact file structure
+  # 2. Debug: Show environment and feed URL
   - powershell: |
-      Write-Host "##[section]Working directory: $(Get-Location)"
-      Write-Host "##[section]All project files:"
+      Write-Host "##[section]Agent Information:"
+      Write-Host "OS: $env:Agent_OS"
+      Write-Host "Name: $env:Agent_Name"
+      Write-Host "##[section]Project Files:"
       Get-ChildItem -Recurse -Filter *.csproj | Select-Object FullName
       Write-Host "##[section]Feed URL that will be used:"
       Write-Host "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-    displayName: 'Debug: Show file structure'
+    displayName: 'Show Environment Info'
 
   # 3. Install .NET 8 SDK
   - task: UseDotNet@2
@@ -43,7 +51,7 @@ steps:
 
   # 4. Restore packages
   - task: DotNetCoreCLI@2
-    displayName: 'Restore packages'
+    displayName: 'Restore Packages'
     inputs:
       command: 'restore'
       projects: '$(solutionPath)'
@@ -52,7 +60,7 @@ steps:
 
   # 5. Build solution
   - task: DotNetCoreCLI@2
-    displayName: 'Build solution'
+    displayName: 'Build Solution'
     inputs:
       command: 'build'
       projects: '$(solutionPath)'
@@ -60,7 +68,7 @@ steps:
 
   # 6. Pack NuGet package
   - task: DotNetCoreCLI@2
-    displayName: 'Pack NuGet package'
+    displayName: 'Create NuGet Package'
     inputs:
       command: 'pack'
       packagesToPack: '$(libraryProject)'
@@ -74,12 +82,12 @@ steps:
   - task: NuGetAuthenticate@1
     displayName: 'Authenticate with Azure Artifacts'
 
-  # 8. Push to Azure Artifacts (with full feed path)
+  # 8. Push to Azure Artifacts
   - task: NuGetCommand@2
     displayName: 'Push to Azure Artifacts'
     inputs:
       command: 'push'
       packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
       nuGetFeedType: 'internal'
-      publishVstsFeed: '$(projectName)/$(feedName)' # Format: ProjectName/FeedName
+      publishVstsFeed: '$(projectName)/$(feedName)'
       allowPackageConflicts: false
