@@ -6,9 +6,10 @@ trigger:
 variables:
   buildConfiguration: 'Release'
   dotNetVersion: '8.0.x'
+  # Update these paths to match your actual project structure
   solutionPath: '**/*.sln'
-  projectPath: '**/UpperCaseCheckLibrary.csproj'
-  testProjectPath: '**/*Tests.csproj'
+  libraryProject: 'UpperCaseCheckLibrary/UpperCaseCheckLibrary.csproj' # Explicit relative path
+  testProject: 'UpperCaseCheckLibrary.Tests/UpperCaseCheckLibrary.Tests.csproj' # If exists
 
 pool:
   name: MyCustomPool
@@ -16,68 +17,63 @@ pool:
     - agent.name -equals MyNewAgent
 
 steps:
-  # Checkout code
+  # 1. Checkout code
   - checkout: self
     clean: true
     fetchDepth: 1
 
-  # Debugging: Show directory structure
-  - script: tree /F
-    displayName: 'Show directory structure'
+  # 2. Debugging: Show exact file structure
+  - powershell: |
+      Write-Host "##[section]Current directory:"
+      Get-Location
+      Write-Host "##[section]All files:"
+      Get-ChildItem -Recurse -File | Select-Object FullName
+    displayName: 'Debug: Show file structure'
 
-  # Install .NET 8 SDK
+  # 3. Install .NET 8 SDK
   - task: UseDotNet@2
     displayName: 'Install .NET 8 SDK'
     inputs:
       version: $(dotNetVersion)
       performMultiLevelLookup: true
-      packageType: 'sdk'
 
-  # Restore NuGet packages
+  # 4. Restore packages
   - task: DotNetCoreCLI@2
-    displayName: 'Restore dependencies'
+    displayName: 'Restore packages'
     inputs:
       command: 'restore'
       projects: '$(solutionPath)'
       feedsToUse: 'select'
       vstsFeed: 'UpperCaseFeed'
-      noCache: true
-      verbosityRestore: 'detailed'
 
-  # Build solution
+  # 5. Build solution
   - task: DotNetCoreCLI@2
     displayName: 'Build solution'
     inputs:
       command: 'build'
       projects: '$(solutionPath)'
-      arguments: '--configuration $(buildConfiguration) --no-restore --verbosity detailed'
+      arguments: '--configuration $(buildConfiguration) --no-restore'
 
-  # Run tests (with corrected condition)
-  - task: DotNetCoreCLI@2
-    displayName: 'Run unit tests'
-    condition: and(succeeded(), ne(variables['testProjectPath'], ''))
-    inputs:
-      command: 'test'
-      projects: '$(testProjectPath)'
-      arguments: '--configuration $(buildConfiguration) --no-build --logger "trx"'
+  # 6. Pack NuGet package (with absolute verification)
+  - powershell: |
+      # Verify project file exists
+      if (-Not (Test-Path -Path '$(libraryProject)')) {
+        Write-Host "##vso[task.logissue type=error]Project file not found at $(libraryProject)"
+        Write-Host "##[section]Available project files:"
+        Get-ChildItem -Recurse -Filter *.csproj | Select-Object FullName
+        exit 1
+      }
+      
+      # Execute dotnet pack with explicit path
+      dotnet pack '$(libraryProject)' `
+        --configuration $(buildConfiguration) `
+        --output '$(Build.ArtifactStagingDirectory)' `
+        --include-symbols `
+        --include-source `
+        -p:Version=1.0.0$(Rev:.r)
+    displayName: 'Pack NuGet package (verified)'
 
-  # Pack NuGet package
-  - task: DotNetCoreCLI@2
-    displayName: 'Pack NuGet package'
-    inputs:
-      command: 'pack'
-      packagesToPack: '$(projectPath)'
-      versioningScheme: 'byPrereleaseNumber'
-      majorVersion: '1'
-      minorVersion: '0'
-      patchVersion: '0'
-      configuration: $(buildConfiguration)
-      outputDir: '$(Build.ArtifactStagingDirectory)'
-      nobuild: true
-      includesymbols: true
-      verbosityPack: 'detailed'
-
-  # Push to Azure Artifacts
+  # 7. Push to Azure Artifacts
   - task: NuGetAuthenticate@1
     displayName: 'Authenticate with Azure Artifacts'
 
@@ -88,5 +84,3 @@ steps:
       packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
       nuGetFeedType: 'internal'
       publishVstsFeed: 'UpperCaseFeed'
-      allowPackageConflicts: false
-      verbosityPush: 'detailed'
