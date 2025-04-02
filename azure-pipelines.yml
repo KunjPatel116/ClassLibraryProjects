@@ -13,7 +13,7 @@ variables:
   
   # Artifacts Feed Configuration - MUST UPDATE THESE!
   organizationName: 'kpat1045'              # From your dev.azure.com URL
-  projectName: 'YourProjectNameHere'        # The DevOps project containing the feed
+  projectName: 'StringLibrary'        # The DevOps project containing the feed
   feedName: 'UpperCaseFeed'                 # Your feed name (case-sensitive)
 
 pool:
