@@ -1,0 +1,48 @@
+name: 1.0.0$(Rev:r)
+
+variables:
+  buildConfiguration: 'Release'
+  dotNetVersion: '8.0.x'
+
+stages:
+- stage: Build
+  jobs:
+  - job: BuildAndPack
+    pool:
+      name: MyCustomPool
+      demands:
+      - Agent.OS -equals Windows_NT
+    steps:
+    - checkout: self
+    - task: UseDotNet@2
+      displayName: 'Install .NET 8'
+      inputs:
+        version: $(dotNetVersion)
+    - task: DotNetCoreCLI@2
+      displayName: 'Build & Pack'
+      inputs:
+        command: 'pack'
+        projects: 'StringLibrary/StringLibrary.csproj'
+        arguments: '--configuration $(buildConfiguration) -p:Version=1.0.0-ci$(Build.BuildId)'
+    - task: NuGetAuthenticate@1
+      displayName: 'Authenticate'
+    - task: NuGetCommand@2
+      displayName: 'Push to Feed'
+      inputs:
+        command: 'push'
+        packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
+        publishVstsFeed: 'UpperCaseFeed'
+
+- stage: Test
+  dependsOn: Build
+  jobs:
+  - job: RunTests
+    pool:
+      name: MyCustomPool
+    steps:
+    - checkout: self
+    - task: DotNetCoreCLI@2
+      displayName: 'Run Tests'
+      inputs:
+        command: 'test'
+        projects: '**/*Tests/*.csproj'
