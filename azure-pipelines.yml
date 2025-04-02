@@ -1,7 +1,4 @@
-name: 1.0.0$(Rev:r)
-
-trigger:
-  - main
+name: 1.0.0$(Rev:r)  # Uses build revision for unique versioning
 
 variables:
   buildConfiguration: 'Release'
@@ -9,21 +6,20 @@ variables:
   solutionPath: '**/*.sln'
   libraryProject: 'StringLibrary/StringLibrary.csproj'
   
-  # Versioning
+  # Version configuration
   majorVersion: '1'
   minorVersion: '0'
   patchVersion: '0'
   
   # Artifacts Feed Configuration - MUST UPDATE THESE!
   organizationName: 'kpat1045'              # From your dev.azure.com URL
-  projectName: 'StringLibrary'        # The DevOps project containing the feed
+  projectName: 'YourProjectNameHere'        # The DevOps project containing the feed
   feedName: 'UpperCaseFeed'                 # Your feed name (case-sensitive)
 
 pool:
   name: MyCustomPool                        # Your self-hosted agent pool
   demands:
   - Agent.OS -equals Windows_NT             # Requires Windows agent
-  # - agent.name -equals YourAgentName      # Optional: Specific agent
 
 steps:
   # 1. Checkout code
@@ -31,16 +27,14 @@ steps:
     clean: true
     fetchDepth: 1
 
-  # 2. Debug: Show environment and feed URL
+  # 2. Debug information
   - powershell: |
-      Write-Host "##[section]Agent Information:"
-      Write-Host "OS: $env:Agent_OS"
-      Write-Host "Name: $env:Agent_Name"
-      Write-Host "##[section]Project Files:"
-      Get-ChildItem -Recurse -Filter *.csproj | Select-Object FullName
-      Write-Host "##[section]Feed URL that will be used:"
+      Write-Host "##[section]Build Version Information:"
+      Write-Host "Build.BuildNumber: $(Build.BuildNumber)"
+      Write-Host "Build.BuildId: $(Build.BuildId)"
+      Write-Host "##[section]Feed URL:"
       Write-Host "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-    displayName: 'Show Environment Info'
+    displayName: 'Show Version Info'
 
   # 3. Install .NET 8 SDK
   - task: UseDotNet@2
@@ -66,7 +60,7 @@ steps:
       projects: '$(solutionPath)'
       arguments: '--configuration $(buildConfiguration) --no-restore'
 
-  # 6. Pack NuGet package
+  # 6. Pack NuGet package with unique version
   - task: DotNetCoreCLI@2
     displayName: 'Create NuGet Package'
     inputs:
@@ -76,13 +70,13 @@ steps:
       outputDir: '$(Build.ArtifactStagingDirectory)'
       nobuild: true
       includesymbols: true
-      arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion)'
+      arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)'
 
   # 7. Authenticate with Azure Artifacts
   - task: NuGetAuthenticate@1
     displayName: 'Authenticate with Azure Artifacts'
 
-  # 8. Push to Azure Artifacts
+  # 8. Push to Azure Artifacts (with conflict resolution)
   - task: NuGetCommand@2
     displayName: 'Push to Azure Artifacts'
     inputs:
@@ -90,4 +84,4 @@ steps:
       packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
       nuGetFeedType: 'internal'
       publishVstsFeed: '$(projectName)/$(feedName)'
-      allowPackageConflicts: false
+      allowPackageConflicts: true  # Allows overwriting existing versions
