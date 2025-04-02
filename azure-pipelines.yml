@@ -1,7 +1,7 @@
 name: 1.0.0$(Rev:r)
 
 trigger:
-- main  # Triggers on pushes to main branch
+- main
 
 variables:
   buildConfiguration: 'Release'
@@ -13,7 +13,9 @@ variables:
   feedName: 'UpperCaseFeed'          # Your feed name
 
 pool:
-  vmImage: 'windows-latest'  # Or use your self-hosted pool
+  name: MyCustomPool  # Your self-hosted agent pool
+  demands:
+  - Agent.OS -equals Windows_NT  # Requires Windows agent
 
 steps:
   # 1. Checkout code
