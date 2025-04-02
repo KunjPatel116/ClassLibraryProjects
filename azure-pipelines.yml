@@ -1,54 +1,73 @@
 name: $(Date:yyyyMMdd)$(Rev:.r)
 
 trigger:
-- main
+  - main  # Triggers on pushes to main branch
+
+variables:
+  buildConfiguration: 'Release'
+  dotNetVersion: '8.0.x'
+  majorVersion: '1'
+  minorVersion: '0'
+  patchVersion: '0'
 
 pool:
   name: Default
   demands:
-  - agent.name -equals MySelfHostedAgent
-
-variables:
-  buildConfiguration: 'Release'
+    - agent.name -equals MySelfHostedAgent  # Uses your self-hosted agent
 
 steps:
-- task: UseDotNet@2
-  displayName: 'Use .NET 8.x'
-  inputs:
-    version: '8.0.x'
+  # Install .NET 8 SDK
+  - task: UseDotNet@2
+    displayName: 'Install .NET 8 SDK'
+    inputs:
+      version: $(dotNetVersion)
 
-- task: DotNetCoreCLI@2
-  displayName: 'Restore'
-  inputs:
-    command: 'restore'
-    projects: '**/*.csproj'
+  # Restore NuGet packages
+  - task: DotNetCoreCLI@2
+    displayName: 'Restore NuGet packages'
+    inputs:
+      command: 'restore'
+      projects: '**/*.csproj'
 
-- task: DotNetCoreCLI@2
-  displayName: 'Build'
-  inputs:
-    command: 'build'
-    projects: '**/*.csproj'
-    arguments: '--configuration $(buildConfiguration)'
+  # Build the solution
+  - task: DotNetCoreCLI@2
+    displayName: 'Build solution'
+    inputs:
+      command: 'build'
+      projects: '**/*.csproj'
+      arguments: '--configuration $(buildConfiguration)'
 
-- task: DotNetCoreCLI@2
-  displayName: 'Pack'
-  inputs:
-    command: 'pack'
-    packagesToPack: '**/UpperCaseCheckLibrary.csproj'
-    versioningScheme: 'byPrereleaseNumber'
-    majorVersion: '1'
-    minorVersion: '0'
-    patchVersion: '0'
-    configuration: '$(buildConfiguration)'
+  # Run tests (if any)
+  - task: DotNetCoreCLI@2
+    displayName: 'Run unit tests'
+    inputs:
+      command: 'test'
+      projects: '**/*Tests/*.csproj'
+      arguments: '--configuration $(buildConfiguration) --no-build'
 
-- task: NuGetAuthenticate@1
-  displayName: 'Authenticate with Azure Artifacts'
+  # Pack the library into a NuGet package
+  - task: DotNetCoreCLI@2
+    displayName: 'Create NuGet package'
+    inputs:
+      command: 'pack'
+      packagesToPack: '**/UpperCaseCheckLibrary.csproj'
+      versioningScheme: 'byPrereleaseNumber'
+      majorVersion: $(majorVersion)
+      minorVersion: $(minorVersion)
+      patchVersion: $(patchVersion)
+      configuration: $(buildConfiguration)
+      outputDir: '$(Build.ArtifactStagingDirectory)'
 
-- task: NuGetCommand@2
-  displayName: 'Push to Azure Artifacts'
-  inputs:
-    command: 'push'
-    feedsToUse: 'select'
-    packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
-    nuGetFeedType: 'internal'
-    publishFeedCredentials: 'AzureArtifactsFeed'
+  # Authenticate with Azure Artifacts
+  - task: NuGetAuthenticate@1
+    displayName: 'Authenticate with Azure Artifacts'
+
+  # Push the package to Azure Artifacts feed (UpperCaseFeed)
+  - task: NuGetCommand@2
+    displayName: 'Push to UpperCaseFeed'
+    inputs:
+      command: 'push'
+      feedsToUse: 'select'
+      packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
+      nuGetFeedType: 'internal'
+      publishVstsFeed: 'UpperCaseFeed'  # Your Azure Artifacts feed name
