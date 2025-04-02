@@ -16,73 +16,121 @@ variables:
   projectName: 'StringLibrary'        # The DevOps project containing the feed
   feedName: 'UpperCaseFeed'                 # Your feed name (case-sensitive)
 
-pool:
-  name: MyCustomPool                        # Your self-hosted agent pool
-  demands:
-  - Agent.OS -equals Windows_NT             # Requires Windows agent
+jobs:
+- job: Build
+  strategy:
+    maxParallel: 1  # Ensures sequential execution to avoid queuing
+  pool:
+    name: MyCustomPool
+    demands:
+    - Agent.OS -equals Windows_NT
+    - agent.name -equals MyNewAgent  # Optional: Specific agent name
 
-steps:
-  # 1. Checkout code
-  - checkout: self
-    clean: true
-    fetchDepth: 1
+  steps:
+    # 1. Checkout code
+    - checkout: self
+      clean: true
+      fetchDepth: 1
 
-  # 2. Debug information
-  - powershell: |
-      Write-Host "##[section]Build Information:"
-      Write-Host "Agent OS: $env:Agent_OS"
-      Write-Host "Agent Name: $env:Agent_Name"
-      Write-Host "Feed URL: https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-    displayName: 'Show Environment Info'
+    # 2. Debug information
+    - powershell: |
+        Write-Host "##[section]Build Information:"
+        Write-Host "Agent Name: $env:Agent_Name"
+        Write-Host "Agent OS: $env:Agent_OS"
+        Write-Host "Working Directory: $(Get-Location)"
+        Write-Host "##[section]Project Files:"
+        Get-ChildItem -Recurse -Filter *.csproj | Select-Object FullName
+        Write-Host "##[section]Feed Configuration:"
+        Write-Host "Feed URL: https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
+      displayName: 'Show Environment Info'
 
-  # 3. Install .NET 8 SDK
-  - task: UseDotNet@2
-    displayName: 'Install .NET 8 SDK'
-    inputs:
-      version: $(dotNetVersion)
-      performMultiLevelLookup: true
+    # 3. Install .NET 8 SDK
+    - task: UseDotNet@2
+      displayName: 'Install .NET 8 SDK'
+      inputs:
+        version: $(dotNetVersion)
+        performMultiLevelLookup: true
+        packageType: 'sdk'
 
-  # 4. Restore packages
-  - task: DotNetCoreCLI@2
-    displayName: 'Restore Packages'
-    inputs:
-      command: 'restore'
-      projects: '$(solutionPath)'
-      feedsToUse: 'select'
-      vstsFeed: '$(feedName)'
+    # 4. Restore packages
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore Packages'
+      inputs:
+        command: 'restore'
+        projects: '$(solutionPath)'
+        feedsToUse: 'select'
+        vstsFeed: '$(feedName)'
 
-  # 5. Build solution
-  - task: DotNetCoreCLI@2
-    displayName: 'Build Solution'
-    inputs:
-      command: 'build'
-      projects: '$(solutionPath)'
-      arguments: '--configuration $(buildConfiguration) --no-restore'
+    # 5. Build solution
+    - task: DotNetCoreCLI@2
+      displayName: 'Build Solution'
+      inputs:
+        command: 'build'
+        projects: '$(solutionPath)'
+        arguments: '--configuration $(buildConfiguration) --no-restore'
 
-  # 6. Pack NuGet package with unique version
-  - task: DotNetCoreCLI@2
-    displayName: 'Create NuGet Package'
-    inputs:
-      command: 'pack'
-      packagesToPack: '$(libraryProject)'
-      configuration: $(buildConfiguration)
-      outputDir: '$(Build.ArtifactStagingDirectory)'
-      nobuild: true
-      includesymbols: true
-      arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)'
+    # 6. Pack NuGet package with unique version
+    - task: DotNetCoreCLI@2
+      displayName: 'Create NuGet Package'
+      inputs:
+        command: 'pack'
+        packagesToPack: '$(libraryProject)'
+        configuration: $(buildConfiguration)
+        outputDir: '$(Build.ArtifactStagingDirectory)'
+        nobuild: true
+        includesymbols: true
+        arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)'
 
-  # 7. Authenticate using system token (FIXED)
-  - task: NuGetAuthenticate@1
-    displayName: 'Authenticate with Azure Artifacts'
-    inputs:
-      forceReinstallCredentialProvider: true
+    # 7. Authenticate with Azure Artifacts
+    - task: NuGetAuthenticate@1
+      displayName: 'Authenticate with Azure Artifacts'
+      inputs:
+        forceReinstallCredentialProvider: true
 
-  # 8. Push using direct authentication
-  - task: NuGetCommand@2
-    displayName: 'Push to Azure Artifacts'
-    inputs:
-      command: 'push'
-      packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
-      nuGetFeedType: 'internal'
-      publishVstsFeed: '$(feedName)'  # Simplified feed reference
-      allowPackageConflicts: true
+    # 8. Push to Azure Artifacts with retry logic
+    - powershell: |
+        $retryCount = 0
+        $maxRetries = 3
+        $success = $false
+        
+        while (-not $success -and $retryCount -lt $maxRetries) {
+            try {
+                Write-Host "##[section]Attempt $($retryCount + 1) of $maxRetries"
+                dotnet nuget push "$(Build.ArtifactStagingDirectory)\*.nupkg" `
+                    --source "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json" `
+                    --api-key AzureArtifacts
+                $success = $true
+                Write-Host "##[section]Push succeeded!"
+            }
+            catch {
+                $retryCount++
+                if ($retryCount -ge $maxRetries) {
+                    Write-Host "##vso[task.logissue type=error]Failed after $maxRetries attempts"
+                    throw
+                }
+                Write-Host "##[warning]Push failed, retrying in 5 seconds..."
+                Start-Sleep -Seconds 5
+            }
+        }
+      displayName: 'Push to Azure Artifacts (with retry)'
+      env:
+        VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials": [{"endpoint":"https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json", "username":"$(System.AccessToken)", "password":"$(System.AccessToken)"}]}'
+
+    # 9. Verify package was published
+    - powershell: |
+        $packageName = "StringLibrary"
+        $version = "$(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)"
+        $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
+        
+        $packages = dotnet nuget list --source $feedUrl | Where-Object { $_ -match "$packageName\s+$version" }
+        
+        if ($packages) {
+            Write-Host "##[section]Package verification successful:"
+            Write-Host $packages
+        }
+        else {
+            Write-Host "##vso[task.logissue type=error]Package not found in feed"
+            exit 1
+        }
+      displayName: 'Verify Package Published'
+      condition: succeeded()
