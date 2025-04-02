@@ -1,4 +1,4 @@
-name: $(Date:yyyyMMdd)$(Rev:.r)
+name: 1.0.0$(Rev:r)  # Sets version format at pipeline level
 
 trigger:
   - main
@@ -10,8 +10,10 @@ variables:
   libraryProject: 'StringLibrary/StringLibrary.csproj'
   consoleProject: 'ShowCase/ShowCase.csproj'
   
-  # Use pipeline counter for versioning
-  packageVersion: '1.0.0$(Build.BuildNumber)'
+  # Semantic version variables
+  majorVersion: '1'
+  minorVersion: '0'
+  patchVersion: '0'
 
 pool:
   name: MyCustomPool
@@ -55,17 +57,17 @@ steps:
       projects: '$(solutionPath)'
       arguments: '--configuration $(buildConfiguration) --no-restore'
 
-  # 6. Pack NuGet package (fixed versioning)
+  # 6. Pack NuGet package with explicit version
   - task: DotNetCoreCLI@2
     displayName: 'Pack NuGet package'
     inputs:
       command: 'pack'
       packagesToPack: '$(libraryProject)'
-      versioningScheme: 'byBuildNumber'
       configuration: $(buildConfiguration)
       outputDir: '$(Build.ArtifactStagingDirectory)'
       nobuild: true
       includesymbols: true
+      arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion) -p:PackageVersion=$(majorVersion).$(minorVersion).$(patchVersion)'
 
   # 7. Push to Azure Artifacts
   - task: NuGetAuthenticate@1
