@@ -15,8 +15,11 @@ variables:
   patchVersion: '0'
   
   # Artifacts Feed Configuration
-  feedName: 'UpperCaseFeed' # MUST match exactly
-  feedProject: 'YourProjectName' # The DevOps project containing the feed
+  feedName: 'UpperCaseFeed'
+  feedProject: 'YourProjectName' # Update with your actual project name
+
+pool:
+  vmImage: 'windows-latest' # Changed to Windows image
 
 steps:
   # 1. Checkout code
@@ -30,8 +33,18 @@ steps:
     inputs:
       version: $(dotNetVersion)
       performMultiLevelLookup: true
+      packageType: 'sdk'
 
-  # 3. Restore packages
+  # 3. Debug: Show environment info
+  - powershell: |
+      Write-Host "##[section]Agent OS: $($env:Agent_OS)"
+      Write-Host "##[section]Agent version: $($env:Agent_Version)"
+      Write-Host "##[section]Working directory: $(Get-Location)"
+      Write-Host "##[section]All project files:"
+      Get-ChildItem -Recurse -Filter *.csproj | Select-Object FullName
+    displayName: 'Show environment info'
+
+  # 4. Restore packages
   - task: DotNetCoreCLI@2
     displayName: 'Restore packages'
     inputs:
@@ -40,7 +53,7 @@ steps:
       feedsToUse: 'select'
       vstsFeed: '$(feedName)'
 
-  # 4. Build solution
+  # 5. Build solution
   - task: DotNetCoreCLI@2
     displayName: 'Build solution'
     inputs:
@@ -48,7 +61,7 @@ steps:
       projects: '$(solutionPath)'
       arguments: '--configuration $(buildConfiguration) --no-restore'
 
-  # 5. Pack NuGet package
+  # 6. Pack NuGet package
   - task: DotNetCoreCLI@2
     displayName: 'Pack NuGet package'
     inputs:
@@ -60,16 +73,16 @@ steps:
       includesymbols: true
       arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion)'
 
-  # 6. Authenticate with Azure Artifacts
+  # 7. Authenticate with Azure Artifacts
   - task: NuGetAuthenticate@1
     displayName: 'Authenticate with Azure Artifacts'
 
-  # 7. Push to Azure Artifacts (with full feed URL)
+  # 8. Push to Azure Artifacts
   - task: NuGetCommand@2
     displayName: 'Push to Azure Artifacts'
     inputs:
       command: 'push'
       packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
       nuGetFeedType: 'internal'
-      publishVstsFeed: '$(feedProject)/$(feedName)' # Format: ProjectName/FeedName
+      publishVstsFeed: '$(feedProject)/$(feedName)'
       allowPackageConflicts: false
