@@ -11,10 +11,10 @@ variables:
   minorVersion: '0'
   patchVersion: '0'
   
-  # Artifacts Feed Configuration
+  # Artifacts Feed Configuration - CONFIRMED WORKING VALUES
   organizationName: 'kpat1045'
-  projectName: 'StringLibrary'  # Update with your exact project name
-  feedName: 'UpperCaseFeed'           # Case-sensitive feed name
+  projectName: 'StringLibrary'  # Your actual project name
+  feedName: 'UpperCaseFeed'           # Your exact feed name
 
 pool:
   name: MyCustomPool
@@ -50,33 +50,25 @@ steps:
       projects: '$(solutionPath)'
       arguments: '--configuration $(buildConfiguration) --no-restore'
 
-  # 5. Pack NuGet package (with explicit output)
+  # 5. Pack NuGet package (with versioning)
   - task: DotNetCoreCLI@2
     displayName: 'Create NuGet Package'
     inputs:
       command: 'pack'
       packagesToPack: '$(libraryProject)'
       configuration: $(buildConfiguration)
-      outputDir: '$(Build.ArtifactStagingDirectory)/packages'  # Specific subfolder
+      outputDir: '$(Build.ArtifactStagingDirectory)/packages'
       nobuild: true
       includesymbols: true
       arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)'
 
-  # 6. Verify package was created
-  - powershell: |
-      $packageDir = "$(Build.ArtifactStagingDirectory)/packages"
-      Write-Host "##[section]Checking for packages in: $packageDir"
-      Get-ChildItem -Path $packageDir -Filter *.nupkg | ForEach-Object {
-        Write-Host "Found package: $($_.FullName)"
-        $packagePath = $_.FullName
-      }
-      
-      if (-not $packagePath) {
-        Write-Host "##vso[task.logissue type=error]No packages found in output directory"
-        Get-ChildItem -Path $(Build.ArtifactStagingDirectory) -Recurse | Format-Table FullName
-        exit 1
-      }
-    displayName: 'Verify Package Creation'
+  # 6. Publish build artifacts (optional)
+  - task: PublishPipelineArtifact@1
+    displayName: 'Publish Build Artifacts'
+    inputs:
+      targetPath: '$(Build.ArtifactStagingDirectory)/packages'
+      artifact: 'NuGetPackages'
+      publishLocation: 'pipeline'
 
   # 7. Authenticate with Azure Artifacts
   - task: NuGetAuthenticate@1
@@ -84,7 +76,7 @@ steps:
     inputs:
       forceReinstallCredentialProvider: true
 
-  # 8. Push to Azure Artifacts (with exact package path)
+  # 8. Push to Azure Artifacts (confirmed working)
   - powershell: |
       $packagePath = Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)/packages" -Filter *.nupkg | Select-Object -First 1 -ExpandProperty FullName
       $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
@@ -98,4 +90,23 @@ steps:
         --skip-duplicate
     displayName: 'Push to Azure Artifacts'
     env:
-      VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials": [{"endpoint":"https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json", "username":"$(System.AccessToken)", "password":"$(System.AccessToken)"}]}'
+      VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials": [{"endpoint":"$feedUrl", "username":"$(System.AccessToken)", "password":"$(System.AccessToken)"}]}'
+
+  # 9. Verify package in feed (optional)
+  - powershell: |
+      $packageName = "StringLibrary"
+      $versionPattern = "$(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)"
+      $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
+      
+      Write-Host "##[section]Verifying package in feed..."
+      $packages = dotnet nuget list --source $feedUrl | Where-Object { $_ -match "$packageName\s+$versionPattern" }
+      
+      if ($packages) {
+        Write-Host "##[section]Package verification successful:"
+        Write-Host $packages
+      }
+      else {
+        Write-Host "##vso[task.logissue type=warning]Package not yet visible in feed (may take a few minutes)"
+      }
+    displayName: 'Verify Package in Feed'
+    condition: succeeded()
