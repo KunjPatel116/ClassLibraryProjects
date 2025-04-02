@@ -13,7 +13,7 @@ variables:
   
   # Artifacts Feed Configuration - MUST UPDATE THESE!
   organizationName: 'kpat1045'
-  projectName: 'YourProjectNameHere'
+  projectName: 'StringLibrary'
   feedName: 'UpperCaseFeed'
 
 jobs:
