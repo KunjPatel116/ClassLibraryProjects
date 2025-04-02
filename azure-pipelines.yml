@@ -7,82 +7,54 @@ variables:
   buildConfiguration: 'Release'
   dotNetVersion: '8.0.x'
   solutionPath: '**/*.sln'
-  libraryProject: 'StringLibrary/StringLibrary.csproj'
-  
-  # Versioning
-  majorVersion: '1'
-  minorVersion: '0'
-  patchVersion: '0'
-  
-  # Artifacts Feed Configuration
-  feedName: 'UpperCaseFeed'
-  feedProject: 'YourProjectName' # Update with your actual project name
+  libraryProject: 'StringLibrary\StringLibrary.csproj'  # Windows path
 
-pool:
-  vmImage: 'windows-latest' # Changed to Windows image
+jobs:
+- job: Build
+  strategy:
+    maxParallel: 1  # Ensures single job execution
+  pool:
+    vmImage: 'windows-latest'
+  steps:
+    - checkout: self
+      clean: true
 
-steps:
-  # 1. Checkout code
-  - checkout: self
-    clean: true
-    fetchDepth: 1
+    - task: UseDotNet@2
+      displayName: 'Install .NET 8 SDK'
+      inputs:
+        version: $(dotNetVersion)
 
-  # 2. Install .NET 8 SDK
-  - task: UseDotNet@2
-    displayName: 'Install .NET 8 SDK'
-    inputs:
-      version: $(dotNetVersion)
-      performMultiLevelLookup: true
-      packageType: 'sdk'
+    - powershell: |
+        Write-Host "##[section]Project files:"
+        Get-ChildItem -Recurse -Filter *.csproj | Select-Object FullName
+      displayName: 'Debug: Show files'
 
-  # 3. Debug: Show environment info
-  - powershell: |
-      Write-Host "##[section]Agent OS: $($env:Agent_OS)"
-      Write-Host "##[section]Agent version: $($env:Agent_Version)"
-      Write-Host "##[section]Working directory: $(Get-Location)"
-      Write-Host "##[section]All project files:"
-      Get-ChildItem -Recurse -Filter *.csproj | Select-Object FullName
-    displayName: 'Show environment info'
+    - task: DotNetCoreCLI@2
+      displayName: 'Restore packages'
+      inputs:
+        command: 'restore'
+        projects: '$(solutionPath)'
 
-  # 4. Restore packages
-  - task: DotNetCoreCLI@2
-    displayName: 'Restore packages'
-    inputs:
-      command: 'restore'
-      projects: '$(solutionPath)'
-      feedsToUse: 'select'
-      vstsFeed: '$(feedName)'
+    - task: DotNetCoreCLI@2
+      displayName: 'Build solution'
+      inputs:
+        command: 'build'
+        projects: '$(solutionPath)'
+        arguments: '--configuration $(buildConfiguration)'
 
-  # 5. Build solution
-  - task: DotNetCoreCLI@2
-    displayName: 'Build solution'
-    inputs:
-      command: 'build'
-      projects: '$(solutionPath)'
-      arguments: '--configuration $(buildConfiguration) --no-restore'
+    - task: DotNetCoreCLI@2
+      displayName: 'Pack NuGet package'
+      inputs:
+        command: 'pack'
+        packagesToPack: '$(libraryProject)'
+        arguments: '-p:Version=1.0.0 --output $(Build.ArtifactStagingDirectory)'
 
-  # 6. Pack NuGet package
-  - task: DotNetCoreCLI@2
-    displayName: 'Pack NuGet package'
-    inputs:
-      command: 'pack'
-      packagesToPack: '$(libraryProject)'
-      configuration: $(buildConfiguration)
-      outputDir: '$(Build.ArtifactStagingDirectory)'
-      nobuild: true
-      includesymbols: true
-      arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion)'
+    - task: NuGetAuthenticate@1
+      displayName: 'Authenticate with Azure Artifacts'
 
-  # 7. Authenticate with Azure Artifacts
-  - task: NuGetAuthenticate@1
-    displayName: 'Authenticate with Azure Artifacts'
-
-  # 8. Push to Azure Artifacts
-  - task: NuGetCommand@2
-    displayName: 'Push to Azure Artifacts'
-    inputs:
-      command: 'push'
-      packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
-      nuGetFeedType: 'internal'
-      publishVstsFeed: '$(feedProject)/$(feedName)'
-      allowPackageConflicts: false
+    - task: NuGetCommand@2
+      displayName: 'Push to Azure Artifacts'
+      inputs:
+        command: 'push'
+        packagesToPush: '$(Build.ArtifactStagingDirectory)\**\*.nupkg'
+        publishVstsFeed: 'YourProjectName/UpperCaseFeed'
