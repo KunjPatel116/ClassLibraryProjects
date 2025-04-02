@@ -1,0 +1,54 @@
+name: $(Date:yyyyMMdd)$(Rev:.r)
+
+trigger:
+- main
+
+pool:
+  name: Default
+  demands:
+  - agent.name -equals MySelfHostedAgent
+
+variables:
+  buildConfiguration: 'Release'
+
+steps:
+- task: UseDotNet@2
+  displayName: 'Use .NET 8.x'
+  inputs:
+    version: '8.0.x'
+
+- task: DotNetCoreCLI@2
+  displayName: 'Restore'
+  inputs:
+    command: 'restore'
+    projects: '**/*.csproj'
+
+- task: DotNetCoreCLI@2
+  displayName: 'Build'
+  inputs:
+    command: 'build'
+    projects: '**/*.csproj'
+    arguments: '--configuration $(buildConfiguration)'
+
+- task: DotNetCoreCLI@2
+  displayName: 'Pack'
+  inputs:
+    command: 'pack'
+    packagesToPack: '**/UpperCaseCheckLibrary.csproj'
+    versioningScheme: 'byPrereleaseNumber'
+    majorVersion: '1'
+    minorVersion: '0'
+    patchVersion: '0'
+    configuration: '$(buildConfiguration)'
+
+- task: NuGetAuthenticate@1
+  displayName: 'Authenticate with Azure Artifacts'
+
+- task: NuGetCommand@2
+  displayName: 'Push to Azure Artifacts'
+  inputs:
+    command: 'push'
+    feedsToUse: 'select'
+    packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
+    nuGetFeedType: 'internal'
+    publishFeedCredentials: 'AzureArtifactsFeed'
