@@ -6,10 +6,12 @@ trigger:
 variables:
   buildConfiguration: 'Release'
   dotNetVersion: '8.0.x'
-  # Updated paths based on your actual structure
   solutionPath: '**/*.sln'
-  libraryProject: 'StringLibrary/StringLibrary.csproj' # Corrected path
-  consoleProject: 'ShowCase/ShowCase.csproj' # Your console app
+  libraryProject: 'StringLibrary/StringLibrary.csproj'
+  consoleProject: 'ShowCase/ShowCase.csproj'
+  
+  # Use pipeline counter for versioning
+  packageVersion: '1.0.0$(Build.BuildNumber)'
 
 pool:
   name: MyCustomPool
@@ -24,11 +26,9 @@ steps:
 
   # 2. Show exact file structure
   - powershell: |
-      Write-Host "##[section]Current directory: $(Get-Location)"
+      Write-Host "##[section]Working directory: $(Get-Location)"
       Write-Host "##[section]All project files:"
       Get-ChildItem -Recurse -Filter *.csproj | Select-Object FullName
-      Write-Host "##[section]All files:"
-      tree /F /A
     displayName: 'Debug: Show file structure'
 
   # 3. Install .NET 8 SDK
@@ -55,23 +55,17 @@ steps:
       projects: '$(solutionPath)'
       arguments: '--configuration $(buildConfiguration) --no-restore'
 
-  # 6. Pack NuGet package
-  - powershell: |
-      # Pack the library
-      dotnet pack '$(libraryProject)' `
-        --configuration $(buildConfiguration) `
-        --output '$(Build.ArtifactStagingDirectory)' `
-        --include-symbols `
-        --include-source `
-        -p:Version=1.0.0$(Rev:.r)
-      
-      # Verify package was created
-      if (-Not (Test-Path -Path '$(Build.ArtifactStagingDirectory)/*.nupkg')) {
-        Write-Host "##vso[task.logissue type=error]No packages were created"
-        Get-ChildItem '$(Build.ArtifactStagingDirectory)'
-        exit 1
-      }
+  # 6. Pack NuGet package (fixed versioning)
+  - task: DotNetCoreCLI@2
     displayName: 'Pack NuGet package'
+    inputs:
+      command: 'pack'
+      packagesToPack: '$(libraryProject)'
+      versioningScheme: 'byBuildNumber'
+      configuration: $(buildConfiguration)
+      outputDir: '$(Build.ArtifactStagingDirectory)'
+      nobuild: true
+      includesymbols: true
 
   # 7. Push to Azure Artifacts
   - task: NuGetAuthenticate@1
@@ -84,12 +78,3 @@ steps:
       packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
       nuGetFeedType: 'internal'
       publishVstsFeed: 'UpperCaseFeed'
-
-  # 8. Build and publish console app (optional)
-  - task: DotNetCoreCLI@2
-    displayName: 'Publish console app'
-    inputs:
-      command: 'publish'
-      projects: '$(consoleProject)'
-      arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/app'
-      publishWebProjects: false
