@@ -6,10 +6,9 @@ trigger:
 variables:
   buildConfiguration: 'Release'
   dotNetVersion: '8.0.x'
-  majorVersion: '1'
-  minorVersion: '0'
-  patchVersion: '0'
-  projectPath: 'UpperCaseCheckLibrary/UpperCaseCheckLibrary.csproj' # Explicit path to your project
+  solutionPath: '**/*.sln'
+  projectPath: '**/UpperCaseCheckLibrary.csproj'
+  testProjectPath: '**/*Tests.csproj'
 
 pool:
   name: MyCustomPool
@@ -17,44 +16,66 @@ pool:
     - agent.name -equals MyNewAgent
 
 steps:
+  # Checkout code
+  - checkout: self
+    clean: true
+    fetchDepth: 1
+
+  # Debugging: Show directory structure
+  - script: tree /F
+    displayName: 'Show directory structure'
+
   # Install .NET 8 SDK
   - task: UseDotNet@2
     displayName: 'Install .NET 8 SDK'
     inputs:
       version: $(dotNetVersion)
+      performMultiLevelLookup: true
+      packageType: 'sdk'
 
   # Restore NuGet packages
   - task: DotNetCoreCLI@2
     displayName: 'Restore dependencies'
     inputs:
       command: 'restore'
-      projects: '$(projectPath)'
+      projects: '$(solutionPath)'
       feedsToUse: 'select'
       vstsFeed: 'UpperCaseFeed'
+      noCache: true
+      verbosityRestore: 'detailed'
 
-  # Build the solution
+  # Build solution
   - task: DotNetCoreCLI@2
     displayName: 'Build solution'
     inputs:
       command: 'build'
-      projects: '$(projectPath)'
-      arguments: '--configuration $(buildConfiguration) --no-restore'
+      projects: '$(solutionPath)'
+      arguments: '--configuration $(buildConfiguration) --no-restore --verbosity detailed'
 
-  # Pack NuGet package (updated with explicit path)
+  # Run tests (with corrected condition)
+  - task: DotNetCoreCLI@2
+    displayName: 'Run unit tests'
+    condition: and(succeeded(), ne(variables['testProjectPath'], ''))
+    inputs:
+      command: 'test'
+      projects: '$(testProjectPath)'
+      arguments: '--configuration $(buildConfiguration) --no-build --logger "trx"'
+
+  # Pack NuGet package
   - task: DotNetCoreCLI@2
     displayName: 'Pack NuGet package'
     inputs:
       command: 'pack'
       packagesToPack: '$(projectPath)'
       versioningScheme: 'byPrereleaseNumber'
-      majorVersion: $(majorVersion)
-      minorVersion: $(minorVersion)
-      patchVersion: $(patchVersion)
+      majorVersion: '1'
+      minorVersion: '0'
+      patchVersion: '0'
       configuration: $(buildConfiguration)
       outputDir: '$(Build.ArtifactStagingDirectory)'
       nobuild: true
       includesymbols: true
-      includesource: true
+      verbosityPack: 'detailed'
 
   # Push to Azure Artifacts
   - task: NuGetAuthenticate@1
@@ -64,8 +85,8 @@ steps:
     displayName: 'Push to UpperCaseFeed'
     inputs:
       command: 'push'
-      feedsToUse: 'select'
       packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
       nuGetFeedType: 'internal'
       publishVstsFeed: 'UpperCaseFeed'
-      allowPackageConflicts: true
+      allowPackageConflicts: false
+      verbosityPush: 'detailed'
