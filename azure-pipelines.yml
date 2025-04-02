@@ -1,25 +1,19 @@
 name: 1.0.0$(Rev:r)
 
+trigger:
+- main  # Triggers on pushes to main branch
+
 variables:
   buildConfiguration: 'Release'
   dotNetVersion: '8.0.x'
-  solutionPath: '**/*.sln'
-  libraryProject: 'StringLibrary/StringLibrary.csproj'
   
-  # Version configuration
-  majorVersion: '1'
-  minorVersion: '0'
-  patchVersion: '0'
-  
-  # Artifacts Feed Configuration
+  # Artifacts Feed Configuration - UPDATE THESE!
   organizationName: 'kpat1045'
-  projectName: 'StringLibrary'  # Your actual project name
-  feedName: 'UpperCaseFeed'           # Your exact feed name
+  projectName: 'StringLibrary'  # Your DevOps project name
+  feedName: 'UpperCaseFeed'          # Your feed name
 
 pool:
-  name: MyCustomPool
-  demands:
-  - Agent.OS -equals Windows_NT
+  vmImage: 'windows-latest'  # Or use your self-hosted pool
 
 steps:
   # 1. Checkout code
@@ -28,67 +22,47 @@ steps:
 
   # 2. Install .NET 8 SDK
   - task: UseDotNet@2
-    displayName: 'Install .NET 8 SDK'
+    displayName: 'Install .NET 8'
     inputs:
       version: $(dotNetVersion)
       performMultiLevelLookup: true
 
-  # 3. Restore packages
+  # 3. Build StringLibrary FIRST
   - task: DotNetCoreCLI@2
-    displayName: 'Restore Packages'
-    inputs:
-      command: 'restore'
-      projects: '$(solutionPath)'
-      feedsToUse: 'select'
-      vstsFeed: '$(feedName)'
-
-  # 4. Build solution
-  - task: DotNetCoreCLI@2
-    displayName: 'Build Solution'
+    displayName: 'Build StringLibrary'
     inputs:
       command: 'build'
-      projects: '$(solutionPath)'
-      arguments: '--configuration $(buildConfiguration) --no-restore'
+      projects: 'StringLibrary/StringLibrary.csproj'
+      arguments: '--configuration $(buildConfiguration)'
 
-  # 5. Pack NuGet package
+  # 4. Create NuGet package
   - task: DotNetCoreCLI@2
-    displayName: 'Create NuGet Package'
+    displayName: 'Pack StringLibrary'
     inputs:
       command: 'pack'
-      packagesToPack: '$(libraryProject)'
+      packagesToPack: 'StringLibrary/StringLibrary.csproj'
       configuration: $(buildConfiguration)
       outputDir: '$(Build.ArtifactStagingDirectory)/packages'
-      nobuild: true
-      includesymbols: true
-      arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)'
+      arguments: '-p:Version=1.0.0-ci$(Build.BuildId)'
 
-  # 6. Publish build artifacts (optional)
-  - task: PublishPipelineArtifact@1
-    displayName: 'Publish Build Artifacts'
-    inputs:
-      targetPath: '$(Build.ArtifactStagingDirectory)/packages'
-      artifact: 'NuGetPackages'
-      publishLocation: 'pipeline'
-
-  # 7. Authenticate with Azure Artifacts
+  # 5. Authenticate with Azure Artifacts
   - task: NuGetAuthenticate@1
-    displayName: 'Authenticate with Azure Artifacts'
-    inputs:
-      forceReinstallCredentialProvider: true
+    displayName: 'NuGet Auth'
 
-  # 8. Push to Azure Artifacts (confirmed working)
-  - powershell: |
-      $packagePath = Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)/packages" -Filter *.nupkg | Select-Object -First 1 -ExpandProperty FullName
-      $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-      
-      Write-Host "##[section]Pushing package: $($packagePath | Split-Path -Leaf)"
-      Write-Host "##[section]Package version: $(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)"
-      Write-Host "##[section]Target feed: $feedUrl"
-      
-      dotnet nuget push "$packagePath" `
-        --source "$feedUrl" `
-        --api-key AzureArtifacts `
-        --skip-duplicate
-    displayName: 'Push to Azure Artifacts'
-    env:
-      VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials": [{"endpoint":"https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json", "username":"$(System.AccessToken)", "password":"$(System.AccessToken)"}]}'
+  # 6. Push to Azure Artifacts
+  - task: NuGetCommand@2
+    displayName: 'Push Package'
+    inputs:
+      command: 'push'
+      packagesToPush: '$(Build.ArtifactStagingDirectory)/packages/*.nupkg'
+      nuGetFeedType: 'internal'
+      publishVstsFeed: '$(feedName)'
+      allowPackageConflicts: false
+
+  # 7. Build ShowCase AFTER package is available
+  - task: DotNetCoreCLI@2
+    displayName: 'Build ShowCase'
+    inputs:
+      command: 'build'
+      projects: 'ShowCase/ShowCase.csproj'
+      arguments: '--configuration $(buildConfiguration) --no-restore'
