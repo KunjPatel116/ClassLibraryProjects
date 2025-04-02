@@ -1,4 +1,4 @@
-name: 1.0.0$(Rev:r)  # Uses build revision for unique versioning
+name: 1.0.0$(Rev:r)
 
 variables:
   buildConfiguration: 'Release'
@@ -13,7 +13,7 @@ variables:
   
   # Artifacts Feed Configuration - MUST UPDATE THESE!
   organizationName: 'kpat1045'              # From your dev.azure.com URL
-  projectName: 'StringLibrary'        # The DevOps project containing the feed
+  projectName: 'YourProjectNameHere'        # The DevOps project containing the feed
   feedName: 'UpperCaseFeed'                 # Your feed name (case-sensitive)
 
 pool:
@@ -29,12 +29,11 @@ steps:
 
   # 2. Debug information
   - powershell: |
-      Write-Host "##[section]Build Version Information:"
-      Write-Host "Build.BuildNumber: $(Build.BuildNumber)"
-      Write-Host "Build.BuildId: $(Build.BuildId)"
-      Write-Host "##[section]Feed URL:"
-      Write-Host "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-    displayName: 'Show Version Info'
+      Write-Host "##[section]Build Information:"
+      Write-Host "Agent OS: $env:Agent_OS"
+      Write-Host "Agent Name: $env:Agent_Name"
+      Write-Host "Feed URL: https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
+    displayName: 'Show Environment Info'
 
   # 3. Install .NET 8 SDK
   - task: UseDotNet@2
@@ -72,16 +71,18 @@ steps:
       includesymbols: true
       arguments: '-p:Version=$(majorVersion).$(minorVersion).$(patchVersion)-ci$(Build.BuildId)'
 
-  # 7. Authenticate with Azure Artifacts
+  # 7. Authenticate using system token (FIXED)
   - task: NuGetAuthenticate@1
     displayName: 'Authenticate with Azure Artifacts'
+    inputs:
+      forceReinstallCredentialProvider: true
 
-  # 8. Push to Azure Artifacts (with conflict resolution)
+  # 8. Push using direct authentication
   - task: NuGetCommand@2
     displayName: 'Push to Azure Artifacts'
     inputs:
       command: 'push'
       packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
       nuGetFeedType: 'internal'
-      publishVstsFeed: '$(projectName)/$(feedName)'
-      allowPackageConflicts: true  # Allows overwriting existing versions
+      publishVstsFeed: '$(feedName)'  # Simplified feed reference
+      allowPackageConflicts: true
