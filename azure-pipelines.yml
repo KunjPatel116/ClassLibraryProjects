@@ -1,4 +1,4 @@
-name: 1.0.0$(Build.BuildId)  # Dynamic versioning with build ID
+name: 1.0.0$(Build.BuildId)
 
 variables:
   buildConfiguration: 'Release'
@@ -19,23 +19,28 @@ stages:
     - checkout: self
       clean: true
 
-    # Verify feed access
+    # Verify feed exists and is accessible
     - powershell: |
         $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-        Write-Host "##[section]Feed URL: $feedUrl"
-        try {
-          $response = Invoke-WebRequest -Uri $feedUrl -UseBasicParsing
-          Write-Host "##[section]Feed access successful!"
-        }
-        catch {
-          Write-Host "##vso[task.logissue type=error]Feed access failed: $($_.Exception.Message)"
+        Write-Host "##[section]Verifying feed exists at: $feedUrl"
+        
+        # Check feed existence using REST API
+        $feedApiUrl = "$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_apis/packaging/feeds?api-version=6.0-preview.1"
+        $feeds = Invoke-RestMethod -Uri $feedApiUrl -Headers @{Authorization = "Bearer $(System.AccessToken)"}
+        
+        if ($feeds.value.name -contains "$(feedName)") {
+          Write-Host "##[section]Feed verification successful!"
+        } else {
+          Write-Host "##vso[task.logissue type=error]Feed '$(feedName)' not found!"
+          Write-Host "##[section]Available feeds:"
+          $feeds.value | Format-Table name, id -AutoSize
           exit 1
         }
-      displayName: 'Verify Feed Access'
+      displayName: 'Verify Feed Exists'
       env:
         SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 
-    # Install .NET
+    # Install .NET 8
     - task: UseDotNet@2
       displayName: 'Install .NET 8'
       inputs:
@@ -50,16 +55,31 @@ stages:
         projects: 'StringLibrary/StringLibrary.csproj'
         arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory) -p:Version=$(Build.BuildNumber)'
 
-    # Push to feed
-    - task: NuGetAuthenticate@1
-      displayName: 'Authenticate with Azure Artifacts'
+    # Debug: List generated packages
+    - powershell: |
+        Write-Host "##[section]Generated packages:"
+        Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)" -Recurse -Filter *.nupkg | ForEach-Object {
+          Write-Host $_.FullName
+        }
+      displayName: 'List Packages'
 
+    # Authenticate with Azure Artifacts
+    - task: NuGetAuthenticate@1
+      displayName: 'NuGet Authenticate'
+      inputs:
+        forceReinstallCredentialProvider: true
+
+    # Push to feed with explicit feed specification
     - task: DotNetCoreCLI@2
-      displayName: 'Push to Feed'
+      displayName: 'Push to Azure Artifacts'
       inputs:
         command: 'push'
         packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
+        feedsToUse: 'select'
+        vstsFeed: '$(organizationName)/$(projectName)/$(feedName)'
         publishVstsFeed: '$(feedName)'
+      env:
+        VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials": [{"endpoint":"https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json", "username":"$(System.AccessToken)", "password":"$(System.AccessToken)"}]}'
 
 - stage: Test
   dependsOn: Build
@@ -75,4 +95,4 @@ stages:
       inputs:
         command: 'test'
         projects: '**/*Tests/*.csproj'
-        arguments: '--configuration $(buildConfiguration)'
+        arguments: '--configuration $(buildConfiguration) --collect:"XPlat Code Coverage"'
