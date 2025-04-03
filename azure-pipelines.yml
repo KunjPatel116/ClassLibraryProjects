@@ -19,25 +19,22 @@ stages:
     - checkout: self
       clean: true
 
-    # Simplified feed verification
+    # Modified feed verification - uses NuGet instead of direct HTTP
     - powershell: |
         $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-        Write-Host "##[section]Testing feed accessibility: $feedUrl"
+        Write-Host "##[section]Testing feed accessibility via NuGet: $feedUrl"
         
-        # Basic connectivity test
-        try {
-          $response = Invoke-WebRequest -Uri $feedUrl -UseBasicParsing -Method Head
-          Write-Host "##[section]Feed is accessible"
-        }
-        catch {
-          Write-Host "##vso[task.logissue type=error]Failed to access feed: $($_.Exception.Message)"
-          Write-Host "##[warning]Please verify:"
-          Write-Host "##[warning]1. Feed exists in project $(projectName)"
-          Write-Host "##[warning]2. Name is exactly '$(feedName)' (case-sensitive)"
-          Write-Host "##[warning]3. Build service has Contributor permissions"
-          exit 1
-        }
-      displayName: 'Verify Feed Accessibility'
+        # Temporary add source to test connectivity
+        dotnet nuget add source $feedUrl --name testfeed --username patel --password $(System.AccessToken) --store-password-in-clear-text
+        
+        # List sources to verify
+        dotnet nuget list source
+        
+        # Basic test query
+        dotnet nuget search "StringLibrary" --source $feedUrl --take 1
+      displayName: 'Verify Feed via NuGet'
+      env:
+        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 
     # Install .NET 8
     - task: UseDotNet@2
@@ -54,14 +51,6 @@ stages:
         projects: 'StringLibrary/StringLibrary.csproj'
         arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory) -p:Version=$(Build.BuildNumber)'
 
-    # List generated packages (debugging)
-    - powershell: |
-        Write-Host "##[section]Generated packages:"
-        Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)" -Recurse -Filter *.nupkg | ForEach-Object {
-          Write-Host $_.FullName
-        }
-      displayName: 'List Generated Packages'
-
     # Authenticate with Azure Artifacts
     - task: NuGetAuthenticate@1
       displayName: 'NuGet Authenticate'
@@ -69,20 +58,22 @@ stages:
         forceReinstallCredentialProvider: true
 
     # Push to feed with explicit credentials
-    - powershell: |
-        $packagePath = Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)" -Filter *.nupkg | Select-Object -First 1 -ExpandProperty FullName
-        $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-        
-        Write-Host "##[section]Pushing package: $packagePath"
-        Write-Host "##[section]To feed: $feedUrl"
-        
-        dotnet nuget push "$packagePath" `
-          --source "$feedUrl" `
-          --api-key AzureArtifacts `
-          --skip-duplicate
+    - task: DotNetCoreCLI@2
       displayName: 'Push to Azure Artifacts'
+      inputs:
+        command: 'push'
+        packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
+        feedsToUse: 'select'
+        vstsFeed: '$(organizationName)/$(projectName)/$(feedName)'
       env:
-        VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials": [{"endpoint":"$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_packaging/$(feedName)/nuget/v3/index.json", "username":"$(System.AccessToken)", "password":"$(System.AccessToken)"}]}'
+        VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: |
+          {
+            "endpointCredentials": [{
+              "endpoint":"https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json",
+              "username":"$(System.AccessToken)",
+              "password":"$(System.AccessToken)"
+            }]
+          }
 
 - stage: Test
   dependsOn: Build
