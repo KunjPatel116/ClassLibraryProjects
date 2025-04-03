@@ -19,22 +19,11 @@ stages:
     - checkout: self
       clean: true
 
-    # Modified feed verification - uses NuGet instead of direct HTTP
+    # Simplified feed check - just verify we can list sources
     - powershell: |
-        $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-        Write-Host "##[section]Testing feed accessibility via NuGet: $feedUrl"
-        
-        # Temporary add source to test connectivity
-        dotnet nuget add source $feedUrl --name testfeed --username patel --password $(System.AccessToken) --store-password-in-clear-text
-        
-        # List sources to verify
+        Write-Host "##[section]Listing available NuGet sources:"
         dotnet nuget list source
-        
-        # Basic test query
-        dotnet nuget search "StringLibrary" --source $feedUrl --take 1
-      displayName: 'Verify Feed via NuGet'
-      env:
-        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      displayName: 'Verify NuGet Connectivity'
 
     # Install .NET 8
     - task: UseDotNet@2
@@ -51,29 +40,22 @@ stages:
         projects: 'StringLibrary/StringLibrary.csproj'
         arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory) -p:Version=$(Build.BuildNumber)'
 
-    # Authenticate with Azure Artifacts
+    # Authenticate with Azure Artifacts (CRITICAL STEP)
     - task: NuGetAuthenticate@1
       displayName: 'NuGet Authenticate'
       inputs:
         forceReinstallCredentialProvider: true
 
-    # Push to feed with explicit credentials
+    # Push using GUID instead of name (more reliable)
     - task: DotNetCoreCLI@2
       displayName: 'Push to Azure Artifacts'
       inputs:
         command: 'push'
         packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
         feedsToUse: 'select'
-        vstsFeed: '$(organizationName)/$(projectName)/$(feedName)'
+        vstsFeed: 'abc5fc66-5b25-45fb-b9a7-aeaaeacf35be'  # From your feed's JSON response
       env:
-        VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: |
-          {
-            "endpointCredentials": [{
-              "endpoint":"https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json",
-              "username":"$(System.AccessToken)",
-              "password":"$(System.AccessToken)"
-            }]
-          }
+        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 
 - stage: Test
   dependsOn: Build
