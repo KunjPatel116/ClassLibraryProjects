@@ -19,26 +19,25 @@ stages:
     - checkout: self
       clean: true
 
-    # Verify feed exists and is accessible
+    # Simplified feed verification
     - powershell: |
         $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
-        Write-Host "##[section]Verifying feed exists at: $feedUrl"
+        Write-Host "##[section]Testing feed accessibility: $feedUrl"
         
-        # Check feed existence using REST API
-        $feedApiUrl = "$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_apis/packaging/feeds?api-version=6.0-preview.1"
-        $feeds = Invoke-RestMethod -Uri $feedApiUrl -Headers @{Authorization = "Bearer $(System.AccessToken)"}
-        
-        if ($feeds.value.name -contains "$(feedName)") {
-          Write-Host "##[section]Feed verification successful!"
-        } else {
-          Write-Host "##vso[task.logissue type=error]Feed '$(feedName)' not found!"
-          Write-Host "##[section]Available feeds:"
-          $feeds.value | Format-Table name, id -AutoSize
+        # Basic connectivity test
+        try {
+          $response = Invoke-WebRequest -Uri $feedUrl -UseBasicParsing -Method Head
+          Write-Host "##[section]Feed is accessible"
+        }
+        catch {
+          Write-Host "##vso[task.logissue type=error]Failed to access feed: $($_.Exception.Message)"
+          Write-Host "##[warning]Please verify:"
+          Write-Host "##[warning]1. Feed exists in project $(projectName)"
+          Write-Host "##[warning]2. Name is exactly '$(feedName)' (case-sensitive)"
+          Write-Host "##[warning]3. Build service has Contributor permissions"
           exit 1
         }
-      displayName: 'Verify Feed Exists'
-      env:
-        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      displayName: 'Verify Feed Accessibility'
 
     # Install .NET 8
     - task: UseDotNet@2
@@ -55,13 +54,13 @@ stages:
         projects: 'StringLibrary/StringLibrary.csproj'
         arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory) -p:Version=$(Build.BuildNumber)'
 
-    # Debug: List generated packages
+    # List generated packages (debugging)
     - powershell: |
         Write-Host "##[section]Generated packages:"
         Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)" -Recurse -Filter *.nupkg | ForEach-Object {
           Write-Host $_.FullName
         }
-      displayName: 'List Packages'
+      displayName: 'List Generated Packages'
 
     # Authenticate with Azure Artifacts
     - task: NuGetAuthenticate@1
@@ -69,17 +68,21 @@ stages:
       inputs:
         forceReinstallCredentialProvider: true
 
-    # Push to feed with explicit feed specification
-    - task: DotNetCoreCLI@2
+    # Push to feed with explicit credentials
+    - powershell: |
+        $packagePath = Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)" -Filter *.nupkg | Select-Object -First 1 -ExpandProperty FullName
+        $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
+        
+        Write-Host "##[section]Pushing package: $packagePath"
+        Write-Host "##[section]To feed: $feedUrl"
+        
+        dotnet nuget push "$packagePath" `
+          --source "$feedUrl" `
+          --api-key AzureArtifacts `
+          --skip-duplicate
       displayName: 'Push to Azure Artifacts'
-      inputs:
-        command: 'push'
-        packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
-        feedsToUse: 'select'
-        vstsFeed: '$(organizationName)/$(projectName)/$(feedName)'
-        publishVstsFeed: '$(feedName)'
       env:
-        VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials": [{"endpoint":"https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json", "username":"$(System.AccessToken)", "password":"$(System.AccessToken)"}]}'
+        VSS_NUGET_EXTERNAL_FEED_ENDPOINTS: '{"endpointCredentials": [{"endpoint":"$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_packaging/$(feedName)/nuget/v3/index.json", "username":"$(System.AccessToken)", "password":"$(System.AccessToken)"}]}'
 
 - stage: Test
   dependsOn: Build
@@ -95,4 +98,4 @@ stages:
       inputs:
         command: 'test'
         projects: '**/*Tests/*.csproj'
-        arguments: '--configuration $(buildConfiguration) --collect:"XPlat Code Coverage"'
+        arguments: '--configuration $(buildConfiguration)'
