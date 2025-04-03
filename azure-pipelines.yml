@@ -34,47 +34,22 @@ stages:
         projects: 'StringLibrary/StringLibrary.csproj'
         arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory) -p:Version=$(Build.BuildNumber)'
 
-    # Configure NuGet authentication (MUST COME BEFORE PUSH)
+    # Configure NuGet authentication
     - task: NuGetAuthenticate@1
-      displayName: 'Authenticate with Azure Artifacts'
-      inputs:
-        forceReinstallCredentialProvider: true
+      displayName: 'NuGet Authenticate'
 
-    # PowerShell-based push with explicit auth (most reliable method)
+    # Push using explicit feed URL
     - powershell: |
         $packagePath = Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)" -Filter *.nupkg | Select-Object -First 1 -ExpandProperty FullName
         $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
         
-        Write-Host "##[section]Pushing package: $packagePath"
-        Write-Host "##[section]To feed: $feedUrl"
+        Write-Host "Pushing package: $packagePath"
+        Write-Host "To feed: $feedUrl"
         
-        # Create temporary NuGet config with explicit credentials
-        $nugetConfig = @"
-<?xml version="1.0" encoding="utf-8"?>
-<configuration>
-  <packageSources>
-    <add key="AzureDevOpsFeed" value="$feedUrl" />
-  </packageSources>
-  <packageSourceCredentials>
-    <AzureDevOpsFeed>
-      <add key="Username" value="patel" />
-      <add key="ClearTextPassword" value="$(System.AccessToken)" />
-    </AzureDevOpsFeed>
-  </packageSourceCredentials>
-</configuration>
-"@
-        $configPath = "$(Build.SourcesDirectory)\nuget.config"
-        $nugetConfig | Out-File -FilePath $configPath -Encoding utf8
-        
-        # Execute push with explicit config
         dotnet nuget push "$packagePath" `
           --source "$feedUrl" `
           --api-key AzureArtifacts `
-          --config-file "$configPath" `
           --skip-duplicate
-        
-        # Clean up
-        Remove-Item -Path $configPath -Force
       displayName: 'Push to Azure Artifacts'
       env:
         SYSTEM_ACCESSTOKEN: $(System.AccessToken)
