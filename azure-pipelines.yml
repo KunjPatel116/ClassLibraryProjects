@@ -5,7 +5,7 @@ variables:
   dotNetVersion: '8.0.x'
   organizationName: 'kpat1045'
   projectName: 'StringLibrary'
-  feedName: 'StringLibraryFeed'  # Updated feed name
+  feedName: 'StringLibraryFeed'
 
 stages:
 - stage: Build
@@ -34,18 +34,50 @@ stages:
         projects: 'StringLibrary/StringLibrary.csproj'
         arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory) -p:Version=$(Build.BuildNumber)'
 
-    # Authenticate with Azure Artifacts
+    # Configure NuGet authentication (MUST COME BEFORE PUSH)
     - task: NuGetAuthenticate@1
-      displayName: 'NuGet Authenticate'
-
-    # Push to the new feed
-    - task: DotNetCoreCLI@2
-      displayName: 'Push to Azure Artifacts'
+      displayName: 'Authenticate with Azure Artifacts'
       inputs:
-        command: 'push'
-        packagesToPush: '$(Build.ArtifactStagingDirectory)/**/*.nupkg'
-        feedsToUse: 'select'
-        vstsFeed: '$(organizationName)/$(projectName)/$(feedName)'
+        forceReinstallCredentialProvider: true
+
+    # PowerShell-based push with explicit auth (most reliable method)
+    - powershell: |
+        $packagePath = Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)" -Filter *.nupkg | Select-Object -First 1 -ExpandProperty FullName
+        $feedUrl = "https://pkgs.dev.azure.com/$(organizationName)/$(projectName)/_packaging/$(feedName)/nuget/v3/index.json"
+        
+        Write-Host "##[section]Pushing package: $packagePath"
+        Write-Host "##[section]To feed: $feedUrl"
+        
+        # Create temporary NuGet config with explicit credentials
+        $nugetConfig = @"
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <add key="AzureDevOpsFeed" value="$feedUrl" />
+  </packageSources>
+  <packageSourceCredentials>
+    <AzureDevOpsFeed>
+      <add key="Username" value="patel" />
+      <add key="ClearTextPassword" value="$(System.AccessToken)" />
+    </AzureDevOpsFeed>
+  </packageSourceCredentials>
+</configuration>
+"@
+        $configPath = "$(Build.SourcesDirectory)\nuget.config"
+        $nugetConfig | Out-File -FilePath $configPath -Encoding utf8
+        
+        # Execute push with explicit config
+        dotnet nuget push "$packagePath" `
+          --source "$feedUrl" `
+          --api-key AzureArtifacts `
+          --config-file "$configPath" `
+          --skip-duplicate
+        
+        # Clean up
+        Remove-Item -Path $configPath -Force
+      displayName: 'Push to Azure Artifacts'
+      env:
+        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 
 - stage: Test
   dependsOn: Build
