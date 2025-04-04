@@ -26,12 +26,13 @@ stages:
         version: $(dotNetVersion)
         performMultiLevelLookup: true
 
+    # Build and pack
     - task: DotNetCoreCLI@2
-         displayName: 'Build & Pack'
-  inputs:
-    command: 'pack'
-    packagesToPack: 'StringLibrary/StringLibrary.csproj'  # Explicitly specify
-    arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)'
+      displayName: 'Build & Pack'
+      inputs:
+        command: 'pack'
+        packagesToPack: 'StringLibrary/StringLibrary.csproj'
+        arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)'
 
     # Configure NuGet authentication
     - task: NuGetAuthenticate@1
