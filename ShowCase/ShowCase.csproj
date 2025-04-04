@@ -8,7 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-	  <PackageReference Include="StringLibrary" Version="1.0.0-ci*" />
+	  <PackageReference Include="StringLibrary" Version="1.0.0" />
   </ItemGroup>
 
 </Project>
